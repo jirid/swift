@@ -888,7 +888,7 @@ public:
 
   void addUsedGlobal(llvm::GlobalValue *global);
   void addCompilerUsedGlobal(llvm::GlobalValue *global);
-  void addObjCClass(llvm::Constant *addr, bool nonlazy);
+  void addObjCClass(ClassDecl *classDecl, llvm::Constant *addr);
   void addProtocolConformance(ConformanceDescription &&conformance);
 
   llvm::Constant *emitSwiftProtocols();
@@ -984,6 +984,9 @@ private:
 
   /// List of Objective-C classes, bitcast to i8*.
   SmallVector<llvm::WeakTrackingVH, 4> ObjCClasses;
+    
+  /// List of Objective-C class declarations. ???
+  SmallVector<ClassDecl *, 4> ObjCClassDecls;
   /// List of Objective-C classes that require nonlazy realization, bitcast to
   /// i8*.
   SmallVector<llvm::WeakTrackingVH, 4> ObjCNonLazyClasses;

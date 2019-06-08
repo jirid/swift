@@ -696,8 +696,8 @@ void IRGenModule::emitRuntimeRegistration() {
 
   // Register Objective-C classes and extensions we added.
   if (ObjCInterop) {
-    for (llvm::WeakTrackingVH &ObjCClass : ObjCClasses) {
-      RegIGF.Builder.CreateCall(getInstantiateObjCClassFn(), {ObjCClass});
+    for (ClassDecl *ObjCClassDecl : ObjCClassDecls) {
+        RegIGF.emitTypeMetadataRef(ObjCClassDecl->getDeclaredType()->getCanonicalType());
     }
 
     for (ExtensionDecl *ext : ObjCCategoryDecls) {
@@ -846,9 +846,10 @@ void IRGenModule::addCompilerUsedGlobal(llvm::GlobalValue *global) {
 }
 
 /// Add the given global value to the Objective-C class list.
-void IRGenModule::addObjCClass(llvm::Constant *classPtr, bool nonlazy) {
+void IRGenModule::addObjCClass(ClassDecl *classDecl, llvm::Constant *classPtr) {
   ObjCClasses.push_back(classPtr);
-  if (nonlazy)
+  ObjCClassDecls.push_back(classDecl);
+  if (classDecl->getAttrs().hasAttribute<ObjCNonLazyRealizationAttr>())
     ObjCNonLazyClasses.push_back(classPtr);
 }
 

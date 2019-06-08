@@ -3281,8 +3281,7 @@ void irgen::emitClassMetadata(IRGenModule &IGM, ClassDecl *classDecl,
       if (classDecl->isObjC())
         emitObjCClassSymbol(IGM, classDecl, var);
 
-      IGM.addObjCClass(var,
-                classDecl->getAttrs().hasAttribute<ObjCNonLazyRealizationAttr>());
+      IGM.addObjCClass(classDecl, var);
       break;
     }
   }
