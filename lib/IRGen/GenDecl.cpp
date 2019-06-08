@@ -541,7 +541,7 @@ void IRGenModule::emitRuntimeRegistration() {
   // Duck out early if we have nothing to register.
   if (SwiftProtocols.empty() && ProtocolConformances.empty() &&
       RuntimeResolvableTypes.empty() &&
-      (!ObjCInterop || (ObjCProtocols.empty() && ObjCClasses.empty() &&
+      (!ObjCInterop || (ObjCProtocols.empty() &&
                         ObjCCategoryDecls.empty())) &&
       FieldDescriptors.empty())
     return;
@@ -696,10 +696,6 @@ void IRGenModule::emitRuntimeRegistration() {
 
   // Register Objective-C classes and extensions we added.
   if (ObjCInterop) {
-    for (llvm::WeakTrackingVH &ObjCClass : ObjCClasses) {
-      RegIGF.Builder.CreateCall(getInstantiateObjCClassFn(), {ObjCClass});
-    }
-
     for (ExtensionDecl *ext : ObjCCategoryDecls) {
       CategoryInitializerVisitor(RegIGF, ext).visitMembers(ext);
     }

@@ -2303,11 +2303,14 @@ IRGenModule::getClassMetadataStrategy(const ClassDecl *theClass) {
   if (resilientLayout.doesMetadataRequireRelocation())
     return ClassMetadataStrategy::Resilient;
 
+    // The generic case is handled above.
+  assert(!theClass->isGenericContext());
+    
   // On Windows, we want to force singleton metadata initialization, since
   // fixed class metadata emission requires an absolute global reference to the
   // Builtin.NativeObject value witness table in the runtime, which is something
   // the PE executable format does not support.
-  if (IRGen.Opts.LazyInitializeClassMetadata)
+  if (IRGen.Opts.LazyInitializeClassMetadata || IRGen.Opts.UseJIT)
     return ClassMetadataStrategy::Singleton;
 
   // If we have generic ancestry, we have to use the singleton pattern.
