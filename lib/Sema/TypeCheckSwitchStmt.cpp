@@ -120,6 +120,7 @@ namespace {
       // tuple element name in fixits.
       DeclName Head;
       std::forward_list<Space> Spaces;
+      bool requiresArgumentLabelMatch = false;
 
       size_t computeSize(const DeclContext *DC,
                          SmallPtrSetImpl<TypeBase *> &cache) const {
@@ -180,11 +181,11 @@ namespace {
         : Kind(SpaceKind::UnknownCase),
           TypeAndVal(Type(), allowedButNotRequired), Head(Identifier()),
           Spaces({}) {}
-      explicit Space(Type T, DeclName H, ArrayRef<Space> SP)
+      explicit Space(Type T, DeclName H, ArrayRef<Space> SP, bool R)
           : Kind(SpaceKind::Constructor), TypeAndVal(T), Head(H),
-            Spaces(SP.begin(), SP.end()) {}
-      explicit Space(Type T, DeclName H, std::forward_list<Space> SP)
-          : Kind(SpaceKind::Constructor), TypeAndVal(T), Head(H), Spaces(SP) {}
+            Spaces(SP.begin(), SP.end()), requiresArgumentLabelMatch(R) {}
+      explicit Space(Type T, DeclName H, std::forward_list<Space> SP, bool R)
+          : Kind(SpaceKind::Constructor), TypeAndVal(T), Head(H), Spaces(SP), requiresArgumentLabelMatch(R) {}
       explicit Space(ArrayRef<Space> SP)
         : Kind(SpaceKind::Disjunct), TypeAndVal(Type()),
           Head(Identifier()), Spaces(SP.begin(), SP.end()) {}
@@ -204,13 +205,13 @@ namespace {
       static Space forUnknown(bool allowedButNotRequired) {
         return Space(UnknownCase, allowedButNotRequired);
       }
-      static Space forConstructor(Type T, DeclName H, ArrayRef<Space> SP) {
+      static Space forConstructor(Type T, DeclName H, ArrayRef<Space> SP, bool requiresArgumentLabelMatch = false) {
         if (llvm::any_of(SP, std::mem_fn(&Space::isEmpty))) {
           // A constructor with an unconstructible parameter can never actually
           // be used.
           return Space();
         }
-        return Space(T, H, SP);
+        return Space(T, H, SP, requiresArgumentLabelMatch);
       }
       static Space forBool(bool C) {
         return Space(C);
@@ -269,6 +270,10 @@ namespace {
         assert(getKind() == SpaceKind::Type
                && "Wrong kind of space tried to access printing name");
         return Head.getBaseIdentifier();
+      }
+
+      bool getRequiresArgumentLabelMatch() const {
+        return requiresArgumentLabelMatch;
       }
 
       const std::forward_list<Space> &getSpaces() const {
@@ -368,8 +373,15 @@ namespace {
           // Optimization: If the constructor heads don't match, subspace is
           // impossible.
 
-          if (this->Head != other.Head) {
-            return false;
+          if (this->getRequiresArgumentLabelMatch()) {
+            if (this->Head != other.Head) {
+              return false;
+            }
+          } else {
+            if (this->Head.getBaseIdentifier() !=
+                other.Head.getBaseIdentifier()) {
+              return false;
+            }
           }
 
           // Special Case: Short-circuit comparisons with payload-less
@@ -582,9 +594,16 @@ namespace {
         PAIRCASE (SpaceKind::Constructor, SpaceKind::Constructor): {
           // Optimization: If the heads of the constructors don't match then
           // the two are disjoint and their difference is the first space.
-          if (this->Head.getBaseIdentifier() !=
-              other.Head.getBaseIdentifier()) {
-            return *this;
+
+          if (this->getRequiresArgumentLabelMatch()) {
+            if (this->Head != other.Head) {
+              return *this;
+            }
+          } else {
+            if (this->Head.getBaseIdentifier() !=
+                other.Head.getBaseIdentifier()) {
+              return *this;
+            }
           }
 
           // Special Case: Short circuit patterns without payloads.  Their
@@ -825,7 +844,12 @@ namespace {
           arr.push_back(Space::forBool(false));
         } else if (auto *E = tp->getEnumOrBoundGenericEnum()) {
           // Look into each case of the enum and decompose it in turn.
+          llvm::StringMap<int> caseLabels;
           auto children = E->getAllElements();
+          for (auto child : children) {
+            auto caseLabel = child->getNameStr();
+            caseLabels[caseLabel] = caseLabels[caseLabel] + 1;
+          }
           llvm::transform(
               children, std::back_inserter(arr), [&](EnumElementDecl *eed) {
                 // Don't force people to match unavailable cases; they can't
@@ -858,7 +882,7 @@ namespace {
                   }
                 }
                 return Space::forConstructor(tp, eed->getName(),
-                                             constElemSpaces);
+                                             constElemSpaces, caseLabels[eed->getNameStr()] > 1);
               });
 
           if (!E->isFormallyExhaustive(DC)) {
@@ -1497,12 +1521,23 @@ namespace {
       case PatternKind::EnumElement: {
         auto *VP = cast<EnumElementPattern>(item);
         auto *SP = VP->getSubPattern();
+
+        llvm::StringMap<int> caseLabels;
+        auto E = VP->getType()->getEnumOrBoundGenericEnum();
+        if (E != nullptr) {
+          auto children = E->getAllElements();
+          for (auto child : children) {
+            auto caseLabel = child->getNameStr();
+            caseLabels[caseLabel] = caseLabels[caseLabel] + 1;
+          }
+        }
+
         if (!SP) {
           // If there's no sub-pattern then there's no further recursive
           // structure here.  Yield the constructor space.
           // FIXME: Compound names.
           return Space::forConstructor(item->getType(),
-                                       VP->getName().getBaseIdentifier(), None);
+                                       VP->getName().getFullName(), None, caseLabels[VP->getName().getBaseIdentifier().str()] > 1);
         }
 
         SmallVector<Space, 4> conArgSpace;
@@ -1514,9 +1549,13 @@ namespace {
                             return projectPattern(pate.getPattern());
                           });
           // FIXME: Compound names.
+          SmallVector<Identifier, 4> labels;
+          for (auto element : TP->getElements()) {
+            labels.push_back(element.getLabel());
+          }
           return Space::forConstructor(item->getType(),
-                                       VP->getName().getBaseIdentifier(),
-                                       conArgSpace);
+                                       VP->getName().withArgumentLabels(VP->getElementDecl()->getASTContext(), ArrayRef<Identifier>(labels)).getFullName(),
+                                       conArgSpace, caseLabels[VP->getName().getBaseIdentifier().str()] > 1);
         }
         case PatternKind::Paren: {
           // If we've got an extra level of parens, we need to flatten that into
@@ -1551,8 +1590,8 @@ namespace {
           }
           // FIXME: Compound names.
           return Space::forConstructor(item->getType(),
-                                       VP->getName().getBaseIdentifier(),
-                                       conArgSpace);
+                                       VP->getName().withArgumentLabels(VP->getElementDecl()->getASTContext(), { Identifier() }).getFullName(),
+                                       conArgSpace, caseLabels[VP->getName().getBaseIdentifier().str()] > 1);
         }
         default:
           return projectPattern(SP);
